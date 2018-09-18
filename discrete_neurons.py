@@ -17,45 +17,52 @@ def logit(p):
     return np.log(p) - np.log(1 - p)
 
 
-class SDense(layers.Layer):
+class SDense(layers.Dense):
     def __init__(self, output_dim, output_layer=False):
-        super(SDense, self).__init__(name='sb_dense')
         self.output_layer = output_layer
         self.probs = None
+        self.trainable = True
         if output_layer:
             init = initializers.glorot_uniform()
             activation = 'softmax'
         else:
             init = initializers.RandomNormal(mean=logit(0.7))
             activation = 'sigmoid'
-        self.dense = layers.Dense(output_dim, activation=activation)
+        super(SDense, self).__init__(output_dim, kernel_initializer=init, activation=activation)
 
     def build(self, input_shape):
-        self.dense.build(input_shape=input_shape)
         super(SDense, self).build(input_shape)
 
     def call(self, inputs):
         self.inputs = inputs
-        self.probs = self.dense(inputs)
+        self.probs = super(SDense, self).call(inputs)
         bern = tf.distributions.Bernoulli(probs=self.probs)
         self.out = tf.to_float(bern.sample())
         return self.out
 
-    def get_weights(self):
-        return self.dense.weights
-
     def compute_grads(self, baseline, reward, predict, y_batch):
-        x_t = tf.expand_dims(self.inputs, -1)
-        return tf.reduce_sum((reward - baseline) * (tf.matmul(x_t, tf.expand_dims(self.out, 1)) -
-                                                    tf.matmul(x_t, tf.expand_dims(self.probs, 1))), 0), \
-               tf.reduce_sum(y_batch - predict, 0) if self.output_layer else tf.reduce_sum(1 - self.probs, 0)
+
+        if self.output_layer:
+            x_t = tf.transpose(self.inputs)
+            bias_update = y_batch - predict
+            return tf.matmul(x_t, bias_update), tf.reduce_sum(bias_update, 0)
+        else:
+            x_t = tf.transpose(self.inputs) * (reward - baseline)
+            bias_update = self.out - self.probs
+            # print("xt:", x_t)
+            # print()
+            # print(bias_update)
+            # print(tf.reduce_min(tf.matmul(x_t, bias_update)))
+            # print(tf.reduce_max(tf.matmul(x_t, bias_update)))
+
+            return tf.matmul(x_t, bias_update), tf.reduce_sum(bias_update, 0)
 
 
 class SwitchBoard(models.Model):
     def __init__(self):
         super(SwitchBoard, self).__init__(name='sb')
         self.flatten = layers.Flatten(input_shape=(28, 28))
-        self.dense1 = SDense(10)
+        self.dense1 = SDense(500)
         self.dense2 = SDense(10, output_layer=True)
 
     def call(self, inputs):
@@ -88,8 +95,9 @@ if __name__ == '__main__':
     sb = SwitchBoard()
     # Init model
     sb.call(dummy_data)
-    batch_size = 128
-    opt = tf.train.GradientDescentOptimizer(1e-1)
+    batch_size = 200
+    opt = tf.train.GradientDescentOptimizer(1e1)
+    lr = 1e1
     num_batches = int(np.ceil(num_examples / batch_size))
 
     for i in range(EPOCHS):
@@ -99,19 +107,40 @@ if __name__ == '__main__':
         for b in t:
             x_batch, y_batch = next(ds)
             predict = sb(x_batch).numpy()
-            reward = np.sum(2 * (predict == y_batch) - 1)
-            epoch_acc += np.mean(predict == y_batch)
-            t.set_description(f"Accuracy: {epoch_acc / (b + 1)}")
+            cat = np.argmax(predict, -1)
+            cat_ybatch = np.argmax(y_batch, -1)
+            reward = 2 * (cat == cat_ybatch) - 1
+            epoch_acc += np.mean(cat == cat_ybatch)
+            t.set_description("Accuracy: {:.5f}".format(epoch_acc / (b + 1)))
+            # t.set_description("batch accuracy: {:.5f}".format(np.mean(cat == cat_ybatch)))
             if b == 0:
                 baseline = -1
             else:
                 baseline = (1 - ALPHA) * baseline + ALPHA * reward
-
             grad1 = sb.dense2.compute_grads(baseline, reward, predict, y_batch)
             grad2 = sb.dense1.compute_grads(baseline, reward, predict, y_batch)
-            opt.apply_gradients(zip(grad1, sb.dense2.get_weights()))
-            opt.apply_gradients(zip(grad2, sb.dense1.get_weights()))
-        print(f"Test accuracy: {np.mean(sb(x_test).numpy() == y_test)}")
+            # print("grad2", tf.reduce_min(grad2[0]))
+            # print("grad2", tf.reduce_max(grad2[0]))
+            update1 = [w.numpy() - lr * g for w, g in zip(sb.dense2.weights, grad1)]
+            update2 = [w.numpy() - lr * g for w, g in zip(sb.dense1.weights, grad2)]
+            # sb.dense2.set_weights(update1)
+            # sb.dense1.set_weights(update2)
+            sb.set_weights(update2 + update1)
+            # print(sb.weights)
+                # v -= g * 1e-1
+            # opt.apply_gradients(zip([*grad2, *grad1], sb.trainable_weights))
+            # print(sb.weights[0])
+            # opt.apply_gradients(zip(grad1, sb.dense2.weights))
+            # print(weights_before)
+            # print(sb.dense2.weights[0])
+            # opt.apply_gradients(zip(grad2, sb.dense1.weights))
+            # print('weights')
+            # print(weights_before.numpy())
+            # print()
+            # print(sb.weights[2].numpy())
+            # raise ValueError
+
+        print(f"Test accuracy: {np.mean(np.argmax(sb(x_test).numpy(), -1) == np.argmax(y_test, -1))}")
 
 
 
