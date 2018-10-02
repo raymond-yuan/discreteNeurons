@@ -47,50 +47,63 @@ class SwitchBoard:
         # Init model
         self.model.call(dummy_data)
 
-    def train(self):
+    def train_batch(self, x_batch, y_batch, idxs, first=False):
+        predict = self.model(x_batch).numpy()
+        cat = np.argmax(predict, -1)
+        cat_ybatch = np.argmax(y_batch, -1)
+        R = 2 * (cat == cat_ybatch) - 1
 
-        opt = tf.train.GradientDescentOptimizer(learning_rate=1e-1)
+        if first:
+            self.baselines = np.ones(self.num_examples, dtype=np.float32) * -1
+            reward = R - self.baselines[idxs]
+        else:
+            reward = R - self.baselines[idxs]
+            self.baselines[idxs] = (1 - self.ALPHA) * self.baselines[idxs] + self.ALPHA * reward
+
+        grads = []
+        for layer in self.model.layers[1:]:
+            grads.extend(layer.compute_grads(self.baselines[idxs], reward, y_batch))
+
+        weights_before = self.model.get_weights()
+
+        updates = []
+        # grads = [*grad1, *grad2]
+        # dummy_a = tf.ones((784, 500))
+        # grads[0] = dummy_a
+        self.opt.apply_gradients(zip(grads, self.model.weights))
+        # for idx, w in enumerate(self.model.get_weights()):
+        #     updates.append(w - lr * grads[idx])
+        # self.model.set_weights(updates)
+        for idx, w in enumerate(weights_before):
+            assert np.any(self.model.get_weights()[idx] != w)
+        return np.mean(R, 0), np.mean(cat == cat_ybatch)
+
+
+    def train(self, test=False):
         lr = 1e-1
+        self.opt = tf.train.GradientDescentOptimizer(learning_rate=lr)
+
         num_batches = int(np.ceil(self.num_examples / self.batch_size))
 
-        for i in range(self.EPOCHS):
+        for ep in range(self.EPOCHS):
             ds = self.batch_gen(self.x_train, self.y_train, batch_size=self.batch_size)
             t = trange(num_batches)
             epoch_acc = 0
+            epoch_r = 0
+            cat_acc = 0
             for batch in t:
                 x_batch, y_batch, idxs = next(ds)
-                predict = self.model(x_batch).numpy()
-                cat = np.argmax(predict, -1)
-                cat_ybatch = np.argmax(y_batch, -1)
-                reward = 2 * (cat == cat_ybatch) - 1
-                epoch_acc += np.mean(cat == cat_ybatch)
-                t.set_description("Accuracy: {:.6f}".format(epoch_acc / (batch + 1)))
-                # t.set_description("batch accuracy: {:.5f}".format(np.mean(cat == cat_ybatch)))
-                if batch == 0:
-                    self.baselines = np.ones(self.num_examples, dtype=np.float32) * -1
-                else:
-                    self.baselines[idxs] = (1 - self.ALPHA) * self.baselines[idxs] + self.ALPHA * reward
-                # grad2 = self.model.dense2.compute_grads(self.baselines[idxs], reward, predict, y_batch)
-                # grad1 = self.model.dense1.compute_grads(self.baselines[idxs], reward, predict, y_batch)
-                grads = []
-                for layer in self.model.layers[1:]:
-                    grads.extend(layer.compute_grads(self.baselines[idxs], reward, y_batch))
+                batch_r, batch_acc = self.train_batch(x_batch, y_batch, idxs, ep == 0 and batch == 0)
+                cat_acc += batch_acc
+                epoch_r += batch_r
+                epoch_acc += 0.5 * (batch_r + 1)
+                t.set_description("Accuracy: {:.3f}, Rewards: {:.3f}".format(epoch_acc / (batch + 1),
+                                                                    epoch_r / (batch + 1)))
 
-                weights_before = self.model.get_weights()[0]
+            if test:
+                print(f"Test accuracy: {np.mean(np.argmax(self.model(self.x_test).numpy(), -1) == np.argmax(self.y_test, -1))}")
 
-                updates = []
-                # grads = [*grad1, *grad2]
-                # dummy_a = tf.ones((784, 500))
-                # grads[0] = dummy_a
-                # opt.apply_gradients(zip(grads, self.model.weights))
-                for idx, w in enumerate(self.model.get_weights()):
-                    # print(w.shape)
-                    updates.append(w - lr * grads[idx])
-                self.model.set_weights(updates)
-                # raise ValueError("melissal ikes poop")
-                # assert np.all(self.model.get_weights()[0] != weights_before)
-
-            print(f"Test accuracy: {np.mean(np.argmax(self.model(self.x_test).numpy(), -1) == np.argmax(self.y_test, -1))}")
+        print(f"Final Test accuracy: {np.mean(np.argmax(self.model(self.x_test).numpy(), -1) == np.argmax(self.y_test, -1))}")
 
 
 if __name__ == '__main__':

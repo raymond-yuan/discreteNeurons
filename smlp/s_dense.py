@@ -56,16 +56,16 @@ class SDense(layers.Dense):
             x_t = tf.transpose(self.inputs)
             # bias_update[np.arange(batch_size), y_batch] += 1
             bias_update = y_batch - self.probs
-            return tfe.Variable(tf.matmul(x_t, bias_update) / batch_size),\
-                   tfe.Variable(tf.reduce_mean(bias_update, 0))
+            return tfe.Variable(-tf.matmul(x_t, bias_update)),\
+                   tfe.Variable(-tf.reduce_sum(bias_update, 0))
         else:
             bias_update = tf.transpose(self.out - self.probs)
+            # bias_update *= (reward)
             bias_update *= (reward)
-            # bias_update *= (reward - baseline)
-            weight_grad = tfe.Variable(tf.transpose(tf.matmul(bias_update, self.inputs)) / batch_size)
+            weight_grad = tfe.Variable(-tf.transpose(tf.matmul(bias_update, self.inputs)))
             # print(tf.reduce_max(weight_grad))
             # print(tf.reduce_min(weight_grad))
             # print(tf.reduce_mean(weight_grad))
 
             return weight_grad, \
-                   tfe.Variable(tf.reduce_mean(bias_update, -1))
+                   tfe.Variable(-tf.reduce_sum(bias_update, -1))
