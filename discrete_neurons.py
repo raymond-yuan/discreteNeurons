@@ -4,6 +4,8 @@ from tensorflow.keras.utils import to_categorical
 
 import numpy as np
 from tqdm import trange
+import matplotlib.pyplot as plt
+import argparse
 
 from smlp.model import SwitchBoardModel
 
@@ -13,7 +15,7 @@ tf.enable_eager_execution()
 
 class SwitchBoard:
     def __init__(self):
-        self.EPOCHS = 1000
+        self.EPOCHS = 100
         self.ALPHA = 0.1
         self.baselines = None
         self.batch_size = 200
@@ -76,7 +78,7 @@ class SwitchBoard:
         # self.model.set_weights(updates)
         for idx, w in enumerate(weights_before):
             assert np.any(self.model.get_weights()[idx] != w)
-        return np.mean(R, 0), np.mean(cat == cat_ybatch)
+        return np.mean(R, 0)
 
 
     def train(self, test=False):
@@ -84,31 +86,55 @@ class SwitchBoard:
         self.opt = tf.train.GradientDescentOptimizer(learning_rate=lr)
 
         num_batches = int(np.ceil(self.num_examples / self.batch_size))
-
+        best_acc = -float('inf')
         for ep in range(self.EPOCHS):
             ds = self.batch_gen(self.x_train, self.y_train, batch_size=self.batch_size)
             t = trange(num_batches)
             epoch_acc = 0
             epoch_r = 0
-            cat_acc = 0
             for batch in t:
                 x_batch, y_batch, idxs = next(ds)
-                batch_r, batch_acc = self.train_batch(x_batch, y_batch, idxs, ep == 0 and batch == 0)
-                cat_acc += batch_acc
+                batch_r = self.train_batch(x_batch, y_batch, idxs, ep == 0 and batch == 0)
                 epoch_r += batch_r
                 epoch_acc += 0.5 * (batch_r + 1)
-                t.set_description("Accuracy: {:.3f}, Rewards: {:.3f}".format(epoch_acc / (batch + 1),
+                t.set_description("Ep: {}. Accuracy: {:.3f}, Rewards: {:.3f}".format(ep, epoch_acc / (batch + 1),
                                                                     epoch_r / (batch + 1)))
+
+            if epoch_acc > best_acc:
+                print('saving: {}'.format(epoch_acc))
+                best_acc = epoch_acc
+                self.model.save_weights('./save_models/{}.h5'.format(self.model.__name__))
 
             if test:
                 print(f"Test accuracy: {np.mean(np.argmax(self.model(self.x_test).numpy(), -1) == np.argmax(self.y_test, -1))}")
 
         print(f"Final Test accuracy: {np.mean(np.argmax(self.model(self.x_test).numpy(), -1) == np.argmax(self.y_test, -1))}")
 
+    def visualize(self):
+        self.model.load_weights('/Users/raymondyuan/Documents/projects/discreteNeurons/save_models/15:48:46.513301|500.h5')
+        for i, img in enumerate(self.x_test):
+            try:
+                plt.imshow(img)
+                cat_test = np.argmax(self.y_test[i], -1)
+                cat_predict = np.argmax(self.model(np.expand_dims(img, 0)).numpy(), -1)
+                plt.title(f'Actual: {cat_test}, Predicted{cat_predict}')
+                plt.show()
+            except KeyboardInterrupt:
+                print('Exiting')
+                break
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--train', action='store_true')
+parser.add_argument('--visualize', action='store_true')
+parser.add_argument('--test', action='store_true')
+args = parser.parse_args()
 
 if __name__ == '__main__':
     sb = SwitchBoard()
-    sb.train()
+    if args.train:
+        sb.train()
+    elif args.visualize:
+        sb.visualize()
 
 
 
