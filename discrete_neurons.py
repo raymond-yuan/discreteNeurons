@@ -85,8 +85,9 @@ class SwitchBoard:
                 # opt.apply_gradients(zip(grads, self.model.weights))
                 for idx, w in enumerate(self.model.get_weights()):
                     # print(w.shape)
-                    updates.append(w - lr * 2)
+                    updates.append(w - lr * grads[idx])
                 self.model.set_weights(updates)
+                # raise ValueError("melissal ikes poop")
                 # assert np.all(self.model.get_weights()[0] != weights_before)
 
             print(f"Test accuracy: {np.mean(np.argmax(self.model(self.x_test).numpy(), -1) == np.argmax(self.y_test, -1))}")
