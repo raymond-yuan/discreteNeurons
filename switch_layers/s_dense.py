@@ -5,6 +5,7 @@ import tensorflow as tf
 
 tfe = tf.contrib.eager
 
+
 def logit(p):
     return np.log(p) - np.log(1 - p)
 
@@ -50,8 +51,7 @@ class SDense(layers.Dense):
         # self.out = tf.to_float(dist.sample())
         return self.out
 
-    def compute_grads(self, baseline, reward, y_batch):
-        batch_size = len(reward)
+    def compute_grads(self, reward, y_batch):
         if self.output_layer:
             x_t = tf.transpose(self.inputs)
             # bias_update[np.arange(batch_size), y_batch] += 1
